@@ -222,6 +222,58 @@ class SpacyNER:
         with open(output_file_path, 'w') as f:
             json.dump(result, f, indent=4)
 
+
+
+
+###########################
+
+import pandas as pd
+from bertopic import BERTopic
+
+class TopicModelProcessor:
+    def __init__(self, model_path):
+        # Load BERTopic model and set probability calculation
+        self.merged_model = BERTopic.load(model_path)
+        self.merged_model.calculate_probabilities = True
+
+    def clean_text(self, text):
+        """Function to clean the input text"""
+        lines = text.splitlines()
+        lines = [line.strip() for line in lines if line.strip()]
+        cleaned_text = " ".join(lines)
+        return cleaned_text
+
+    def process_text(self, input_text):
+        """Method to process the text and assign topics"""
+        # Clean the input text
+        docs = [self.clean_text(input_text)]
+
+        # Step 1: Transform the documents using BERTopic model
+        Topic1, probs1 = self.merged_model.transform(docs)
+
+        # Step 2: Creating a DataFrame with topic assignments and probabilities
+        df_probs = pd.DataFrame(probs1, columns=[f"Topic_{i+1}" for i in range(probs1.shape[1])])
+        df_probs['Assigned_Topic'] = Topic1
+
+        # Adding a column for Document identifiers
+        df_probs['Document'] = [f'Document_{i+1}' for i in range(len(Topic1))]
+
+        return df_probs
+
+    def get_topic_info(self):
+        """Method to retrieve topic information"""
+        topic_info = self.merged_model.get_topic_info()
+        topic_info_json = topic_info.to_json(orient='records', indent=4)
+        return topic_info_json
+
+
+
+
+
+
+
+
+
 # Example usage
 if __name__ == "__main__":
     zip_code_file = "/docker-entrypoint-ddx.d/ddx_agent/resources/ZIP_Locale_Detail.xlsx"
