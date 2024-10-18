@@ -12,6 +12,7 @@ import spacy
 from typing import Tuple, List, Dict, Union
 from resources.models import SpacyNER, TopicModelProcessor
 from utils.file_utils import log_restart_count, generate_ddx_id
+from PDFExtractDemo.pdf_processor import start_pdf_extraction_engine  # Importing your old PDF processing method
 
 LOG_FORMAT: str = "%(asctime)s - %(levelname)s - %(message)s"
 logging.basicConfig(filename='/var/log/ddx-agent.out.log', format=LOG_FORMAT, level=logging.INFO)
@@ -78,56 +79,19 @@ class DDXAgent:
     #                           Hierarchical model
     # ------------------------------------------------------------------------------
 
-    async def get_input_texts(self):
-        """Method to provide the list of input texts"""
-        input_texts = [
-            """
-            Planning Schedule with Release Capacity
-            Seo Set Purpose Code
-            Ss. Acme
-            wa Manufacturir Mutually Defined
-            —_e
-            — Reference ID
-            1514893
-            Start Date
-            3/16/2024
-            Carrier
-            Code: USPN
-            Ship To
-            DC #H1A
-            Code: 043849
-            Schedule Type Schedule Qty Code Supplier Code
-            Planned Shipment Based Actual Discrete Quantities 434
-            Volex Item # Item Description | vom |
-            430900 3" Widget
-            Forecast Interval Grouping of Forecast Date Warehouse Loc:
-            Code Forecast Load ID
-            Pf 200 | | aizsizo24 |
-            1 1
-            """
-        ]
-        return input_texts
+    async def process_documents(self, input_text: str) -> dict:
+        """Process documents by retrieving input text and processing them with BERTopic"""
+        df_probs = self.topic_processor.process_text(input_text)
+        topic_info_json = self.topic_processor.get_topic_info()
 
-    async def process_documents(self):
-        """Process documents by retrieving input texts and processing them"""
-        input_texts = await self.get_input_texts()  # Await the async function
-        all_results = []  # To store results for all documents
+        # Convert DataFrame to a dictionary to ensure JSON serializability
+        df_probs_dict = df_probs.to_dict()
+        topic_info_json = json.loads(topic_info_json)  # Ensure JSON format
 
-        for input_text in input_texts:
-            df_probs = self.topic_processor.process_text(input_text)
-            topic_info_json = self.topic_processor.get_topic_info()
-
-            # Convert DataFrame to a dictionary to ensure JSON serializability
-            df_probs_dict = df_probs.to_dict()
-            topic_info_json = json.loads(topic_info_json)  # Ensure JSON format
-
-            # Append the results to the list in proper JSON format
-            all_results.append({
-                #"Processed_DataFrame": df_probs_dict,
-                "Topic_Information": topic_info_json
-            })
-
-        return all_results  # Return all the results as JSON objects
+        return {
+            "Processed_DataFrame": df_probs_dict,
+            "Topic_Information": topic_info_json
+        }
 
     # ------------------------------------------------------------------------------
     #                           Main Task
@@ -141,29 +105,35 @@ class DDXAgent:
             while not self.kill_now:
                 logging.info("Running synchronous tasks...")
 
-                # Static input text for demonstration
-                input_text = """acme@drio.ai, mobile: 6693225487, SSN: 124-55-8974,
-                visa : 1458-9989-6287-6582,
-                Acme Inc,
-                Address: 54 Clydelle ave San Jose 95124, CA
-                The order was placed under PO # 12345, and the billing address is 456 Elm St, New York, NY 10001.
-                The customer phone number is 555-678-9101."""
+                # Get input from PDF extraction engine (updated method)
+                pdf_data = start_pdf_extraction_engine()
 
-                # Run spaCy model and Hierarchical model concurrently
-                spacy_output, hierarchical_output = await asyncio.gather(
-                    self.spacy_model(input_text),
-                    self.process_documents()  # Ensure process_documents is awaited
-                )
+                if pdf_data:
+                    input_text = pdf_data.get("processed_data")  # Extract input data from the PDF
+                    filename = pdf_data.get("filename")
+                    
+                    # Handle cases where 'actual_output' might not exist
+                    actual_output = pdf_data.get("actual_output", None)  # Use None as default if 'actual_output' is missing
 
-                final_output = {
-                    "input_text": input_text,
-                    "spacy_output": spacy_output,
-                    "hierarchical_output": hierarchical_output
-                }
+                    if input_text:
+                        # Run spaCy model and Hierarchical model concurrently
+                        spacy_output, hierarchical_output = await asyncio.gather(
+                            self.spacy_model(input_text),
+                            self.process_documents(input_text)  # Ensure process_documents is awaited
+                        )
 
-                # Properly format the final_output as JSON string
-                formatted_json = json.dumps(final_output, indent=4)
-                logging.info(f"Final Output: {formatted_json}")
+                        final_output = {
+                            "filename": filename,
+                            "input_text": input_text,
+                            "spacy_output": spacy_output,
+                            "hierarchical_output": hierarchical_output
+                        }
+
+                        # Properly format the final_output as JSON string
+                        formatted_json = json.dumps(final_output, indent=4)
+                        logging.info(f"Final Output: {formatted_json}")
+                    else:
+                        logging.warning("No input text found in PDF data.")
 
         except Exception as e:
             logging.error(f"An error occurred in run_synchronous_tasks: {e}")
